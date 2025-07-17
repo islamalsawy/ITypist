@@ -5,13 +5,13 @@ import json
 import xmltodict
 import time
 import os
-import openai
 import win32api
 import win32con
 import tkinter as tk
 from tkinter import filedialog
+from openai import OpenAI
 
-
+client = OpenAI(api_key="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")
 def getAllComponents(jsondata: dict):
 
     root = jsondata['hierarchy']
@@ -198,8 +198,8 @@ def getOutput(question: str):
     start_sequence = "\nA:"
     restart_sequence = "\n\nQ: "
 
-    response = openai.Completion.create(
-        model="curie:ft-personal-2022-10-26-09-55-27",
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
         prompt=question,
         temperature=0.3,
         max_tokens=20,
@@ -208,7 +208,6 @@ def getOutput(question: str):
         presence_penalty=0,
         stop=["\n", "."]
     )
-
     return response["choices"][0].text
 
 
@@ -269,7 +268,7 @@ while True:
     print('Device connected.')
     print(d.info)
     page_source = d.dump_hierarchy(compressed=True, pretty=True)
-    save_path = r"C:/Misc"
+    save_path = r"C:\Users\islam.elafify\OneDrive - Accenture\Desktop\uivision"
     xml_file = open(save_path + 'hierarchy.xml', 'w', encoding='utf-8')
     xml_file.write(page_source)
     xml_file.close()
