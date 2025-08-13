@@ -9,9 +9,13 @@ import win32api
 import win32con
 import tkinter as tk
 from tkinter import filedialog
-from openai import OpenAI
+import google.generativeai as genai
 
-client = OpenAI(api_key="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")
+# To install the required package, run: pip install google-generativeai
+# Configure Gemini with your API key
+genai.configure(api_key="YOUR_GEMINI_API_KEY_HERE")
+client = genai.GenerativeModel('gemini-2.0-flash-exp')
+
 def getAllComponents(jsondata: dict):
 
     root = jsondata['hierarchy']
@@ -193,22 +197,23 @@ def use_context_info_generate_prompt(jsondata: dict):
 
 
 def getOutput(question: str):
-    # openai.api_key = xx
-
-    start_sequence = "\nA:"
-    restart_sequence = "\n\nQ: "
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        prompt=question,
-        temperature=0.3,
-        max_tokens=20,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
-        stop=["\n", "."]
-    )
-    return response["choices"][0].text
+    try:
+        # Configure generation settings for Gemini
+        generation_config = {
+            "temperature": 0.3,
+            "max_output_tokens": 20,
+            "top_p": 1,
+            "stop_sequences": ["\n", "."]
+        }
+        
+        response = client.generate_content(
+            question,
+            generation_config=generation_config
+        )
+        return response.text
+    except Exception as e:
+        print(f"Error with Gemini API: {e}")
+        return "Error generating response"
 
 
 def show_hint(res: list, hint_text: str):

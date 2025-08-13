@@ -1,0 +1,21 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/.retool_types/**": true,
+        "**/*tsconfig.json": true,
+        ".cache": true,
+        "retool.config.json": true
+    },
+    "emulator.emulatorPath": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\emulator\\emulator.exe",
+    "emulator.adbPath": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "android.sdk.path": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk",
+    "android.emulator.path": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\emulator\\emulator.exe",
+    "terminal.integrated.env.windows": {
+        "ANDROID_HOME": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk",
+        "ANDROID_SDK_ROOT": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk"
+    }
+}

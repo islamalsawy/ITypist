@@ -1,0 +1,58 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Medium Phone Emulator",
+			"type": "shell",
+			"command": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\emulator\\emulator.exe",
+			"args": [
+				"-avd",
+				"Medium_Phone_API_36.0"
+			],
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Start Pixel 9 Pro XL Emulator",
+			"type": "shell",
+			"command": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\emulator\\emulator.exe",
+			"args": [
+				"-avd",
+				"Pixel_9_Pro_XL"
+			],
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "List Connected Devices",
+			"type": "shell",
+			"command": "C:\\Users\\islam.elafify\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+			"args": ["devices"],
+			"group": "test",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "Connect to Device (your app)",
+			"type": "shell",
+			"command": "python",
+			"args": ["main.py"],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			}
+		}
+	]
+}
