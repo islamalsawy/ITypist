@@ -1,20 +1,32 @@
-import uiautomator2 as u2
-import pprint
 import os
 import json
 import xmltodict
 import time
-import os
 import win32api
 import win32con
-import tkinter as tk
-from tkinter import filedialog
-import google.generativeai as genai
+from openai import OpenAI
 
-# To install the required package, run: pip install google-generativeai
-# Configure Gemini with your API key
-genai.configure(api_key="YOUR_GEMINI_API_KEY_HERE")
-client = genai.GenerativeModel('gemini-2.0-flash-exp')
+# Set ADB path BEFORE importing uiautomator2
+android_sdk_path = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk\platform-tools"
+current_path = os.environ.get('PATH', '')
+if android_sdk_path not in current_path:
+    os.environ['PATH'] = android_sdk_path + os.pathsep + current_path
+if android_sdk_path not in current_path:
+    os.environ['PATH'] = android_sdk_path + os.pathsep + current_path
+
+# Set ADB path environment variables for uiautomator2
+os.environ['ANDROID_HOME'] = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk"
+os.environ['ANDROID_SDK_ROOT'] = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk"
+
+# Now import uiautomator2 after PATH is set
+import uiautomator2 as u2
+import pprint
+
+# Configure OpenAI with your API key
+api_key = ("sk-proj-h-a4m2ytlim46bq2Hj7XLsJ0P_shBPjVTAWE3OwqVw4ycDFDCGvPuL"
+           "Y7IZmheSjFOM9O3oGIbLT3BlbkFJZ_DejDQN9aX0boJMYacQQq1gFCo3lx"
+           "n4jnu_eY0CbAF2WeQh_u7ShNNfJJkreFe4tQhw1pCs4A")
+client = OpenAI(api_key=api_key)
 
 def getAllComponents(jsondata: dict):
 
@@ -189,96 +201,191 @@ def use_context_info_generate_prompt(jsondata: dict):
         EditText_id = EditText_id.replace('_', ' ')
         text_id = text_id.replace('<EditText id>', EditText_id)
 
-
-    question = text_header + text_app_name + text_activity_name + text_label + text_text + text_context_info + text_id + text_ask
-    final_text = question
-
-    return final_text
+    # Create an intelligent prompt that provides rich context for analysis
+    question = (f"Analyze this Android form field and generate appropriate sample data. "
+                f"App Context: {text_app_name}"
+                f"Field Details: {text_label}{text_text}{text_id}"
+                f"Surrounding Elements: {text_context_info} "
+                f"Instructions: Based on the app name, field labels, surrounding UI elements, "
+                f"and field ID, intelligently determine what type of data this field expects "
+                f"and generate a realistic example that a real user would type. "
+                f"Respond with ONLY the sample data - no explanations or quotes.")
+    
+    return question
 
 
 def getOutput(question: str):
     try:
-        # Configure generation settings for Gemini
-        generation_config = {
-            "temperature": 0.3,
-            "max_output_tokens": 20,
-            "top_p": 1,
-            "stop_sequences": ["\n", "."]
-        }
-        
-        response = client.generate_content(
-            question,
-            generation_config=generation_config
+        # Use OpenAI to intelligently analyze context and generate appropriate data
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": ("You are an expert Android UI analyst. Analyze form field "
+                               "context (app name, labels, surrounding elements, field IDs) "
+                               "to intelligently determine what data type is expected. "
+                               "Generate realistic sample data that real users would type. "
+                               "Examples: emails (john.doe@gmail.com), names (John Smith), "
+                               "phones (+1234567890), passwords (MyPass123), addresses, etc. "
+                               "Respond with ONLY the sample data, no explanations.")
+                },
+                {
+                    "role": "user",
+                    "content": question
+                }
+            ],
+            max_tokens=50,
+            temperature=0.2,  # Lower for more consistent context analysis
+            stop=["\n", ".", "\"", "'"]
         )
-        return response.text
+        
+        # Process and validate response
+        if response.choices and response.choices[0].message.content:
+            result = response.choices[0].message.content.strip()
+            # Clean up unwanted characters and artifacts
+            result = result.replace('"', '').replace("'", '').strip()
+            result = result.replace('Example:', '').replace('Sample:', '').strip()
+            result = result.replace('Answer:', '').replace('Data:', '').strip()
+            
+            # If result seems generic or invalid, try simpler approach
+            if (len(result) < 2 or 
+                result.lower() in ['text', 'data', 'input', 'sample', 'field'] or
+                any(word in result.lower() for word in ['generate', 'analyze', 'context'])):
+                
+                # Fallback with more direct prompt
+                simple_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"What data would a user type here? {question[:150]}... Just the data:"
+                        }
+                    ],
+                    max_tokens=20,
+                    temperature=0.1
+                )
+                
+                if simple_response.choices and simple_response.choices[0].message.content:
+                    fallback_result = simple_response.choices[0].message.content.strip()
+                    fallback_result = fallback_result.replace('"', '').replace("'", '').strip()
+                    if len(fallback_result) > 1 and fallback_result.lower() not in ['text', 'data']:
+                        return fallback_result
+            
+            return result if result else "sample_data"
+        else:
+            print("Empty response from OpenAI API")
+            return "sample_data"
+            
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
-        return "Error generating response"
+        print(f"Error with OpenAI API: {e}")
+        return "sample_data"
 
 
-def show_hint(res: list, hint_text: str):
+def show_hint_console_only(res: list, hint_text: str):
+    """Enhanced version - shows sample data in console AND displays on emulator"""
     x1 = int(res[0])
     y1 = int(res[1])
     x2 = int(res[2])
     y2 = int(res[3])
-    h = y2 - y1
-    w = x2 - x1
-    if h < 100:
-        y2 = y1 + 100
-    hint_text = hint_text.replace(' ', '-')
-    cmd = "adb shell am start-foreground-service -n dongzhong.testforfloatingwindow/.FloatingButtonService -e x1 {x1} -e y1 {y1} -e x2 {x2} -e y2 {y2} -e text {text}"
-    cmd = cmd.replace('{x1}', str(x1)).replace('{y1}', str(y1)).replace('{x2}', str(x2)).replace('{y2}',
-                                                                                                 str(y2)).replace(
-        '{text}', hint_text)
-    print(cmd)
-    os.system(cmd)
-
-
-def insert_code(e_id: str, hint_text: str, f_path: str):
-    e_id = e_id + '"'
-    fr = open(f_path, 'r', encoding='utf-8')
-    print('Reading hierarchy tree...')
-    pprint.pprint(fr)
-    lines = []
-    empty_cnt = 0
-    idx = 0
-    add_idx = True
-    for e_line in fr:
-        lines.append(e_line)
-        if (e_id in e_line):
-            add_idx = False
-            empty_cnt = e_line.find('a')
-        if (add_idx):
-            idx += 1
-    fr.close()
-
-    print('idx: ' + str(idx))
-
-    print('empty cnt: ' + str(empty_cnt))
-    add_content = ' ' * empty_cnt + 'android:hint="' + hint_text + '"\n'
-    lines.insert(idx + 1, add_content)
-    s = ''.join(lines)
-    fw = open(f_path, 'w', encoding='utf-8')
-    fw.write(s)
-    fw.close()
-    win32api.MessageBox(0,
-                        "You forget to add hint in EditText! \nPredicted hint text is added automatically in line " + str(
-                            idx + 2), "Attention", win32con.MB_YESNO)
-
+    
+    # Show clear console output with ASCII characters
+    print("\n" + "=" * 60)
+    print(">>> SAMPLE DATA SUGGESTION <<<")
+    print(f"EditText Position: ({x1},{y1}) to ({x2},{y2})")
+    print(f"Sample Input Data: '{hint_text}'")
+    print(f"Field Dimensions: {x2-x1}px x {y2-y1}px")
+    print("=" * 60)
+    
+    # Also try to show sample data on emulator screen
+    try:
+        # Connect to device
+        d = u2.connect()
+        
+        # Calculate center of EditText
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        
+        print("[EMULATOR] Displaying sample data on screen...")
+        print(f"[EMULATOR] Clicking at position ({center_x}, {center_y})")
+        
+        # Click on the EditText to focus it
+        d.click(center_x, center_y)
+        time.sleep(0.5)
+        
+        # Simply clear and type new text in one operation using set_text
+        try:
+            # Get the focused EditText element and set the text directly
+            # This method replaces ALL existing content
+            edit_field = d(focused=True)
+            if edit_field.exists():
+                edit_field.set_text(hint_text)  # Replace everything with sample data
+                print(f"[EMULATOR] Set text directly to: '{hint_text}'")
+            else:
+                # Fallback: use the specific resource ID if available
+                # Note: component_id would need to be passed as parameter
+                d.send_keys(hint_text)
+                print(f"[EMULATOR] Sent keys: '{hint_text}'")
+        except Exception as e:
+            print(f"[DEBUG] Error setting text: {e}")
+            # Last resort: just send the keys
+            d.send_keys(hint_text)
+        
+        time.sleep(0.3)
+        
+        print(f"[EMULATOR] Displayed sample data '{hint_text}' successfully!")
+        
+    except Exception as e:
+        print(f"[EMULATOR] Could not display on emulator: {e}")
+        print("[EMULATOR] But sample data suggestion is available above")
+    
+    print("=" * 60 + "\n")
+    return True
 
 
 while True:
     print('Connect to device...')
-    d = u2.connect()
-    print('Device connected.')
-    print(d.info)
+    try:
+        # First check if any devices are available
+        import subprocess
+        result = subprocess.run([
+            r"C:\Users\islam.elafify\AppData\Local\Android\Sdk\platform-tools\adb.exe", 
+            "devices"
+        ], capture_output=True, text=True)
+        
+        devices_output = result.stdout.strip()
+        print(f"ADB devices output:\n{devices_output}")
+        
+        if "device" not in devices_output or "List of devices attached" in devices_output and len(devices_output.split('\n')) <= 1:
+            print("No Android devices/emulators detected!")
+            print("Please make sure:")
+            print("1. Android emulator is running")
+            print("2. USB debugging is enabled (for physical devices)")
+            print("3. ADB server is running")
+            print("\nWaiting 10 seconds before retrying...")
+            time.sleep(10)
+            continue
+        
+        d = u2.connect()
+        print('✅ Device connected successfully!')
+        print(d.info)
+        break  # Exit the retry loop once connected
+        
+    except Exception as e:
+        print(f"Failed to connect to device: {e}")
+        print("Retrying in 10 seconds...")
+        time.sleep(10)
+        continue
+
+# Main processing loop - runs after successful connection
+while True:
     page_source = d.dump_hierarchy(compressed=True, pretty=True)
     save_path = r"C:\Users\islam.elafify\OneDrive - Accenture\Desktop\uivision"
-    xml_file = open(save_path + 'hierarchy.xml', 'w', encoding='utf-8')
+    xml_file = open(os.path.join(save_path, 'hierarchy.xml'), 'w', encoding='utf-8')
     xml_file.write(page_source)
     xml_file.close()
 
-    xml_file = open(save_path + 'hierarchy.xml', 'r', encoding='utf-8')
+    xml_file = open(os.path.join(save_path, 'hierarchy.xml'), 'r', encoding='utf-8')
     print('Reading hierarchy tree...')
     data_dict = xmltodict.parse(xml_file.read())
 
@@ -301,15 +408,20 @@ while True:
     f_path = ''
 
     if len(no_hint_text) != 0:
-        msg = """
-                """
-        ret = win32api.MessageBox(0, msg, "Attention", win32con.MB_YESNO)
-        if ret == 7:
+        msg = ("Found " + str(len(no_hint_text)) + " EditText components without hint text! "
+               "Do you want to generate and display hint suggestions on the screen?")
+        ret = win32api.MessageBox(0, msg, "Generate Hint Suggestions",
+                                  win32con.MB_YESNO)
+        if ret == 7:  # No was clicked
+            print("User chose not to generate hints. Waiting...")
             time.sleep(3)
             continue
-        root = tk.Tk()
-        root.withdraw()
-        f_path = filedialog.askopenfilename()
+        
+        print("Generating sample input data for EditText components...")
+    else:
+        print("No EditText components without hints found. Waiting for changes...")
+        time.sleep(3)
+        continue
 
     for e_component in no_hint_text:
         print('---------------')
@@ -330,9 +442,92 @@ while True:
         final_text = use_context_info_generate_prompt(dict_info)
         print(final_text)
         output = getOutput(final_text)
-        print(output)
-        real_ans = output.split("'")[1]
-        print('We think you should use (' + real_ans + ') as hint text.')
+        print(f"API Response: {output}")
+        
+        # Use Gemini's output and clean it to ensure realistic sample data
+        real_ans = output.strip() if output else "sample_text"
+        
+        # Parse and clean the Gemini response to get realistic sample data
+        try:
+            # Remove common unwanted prefixes/suffixes
+            unwanted_phrases = [
+                "Given the context:",
+                "Based on the context:",
+                "Answer:",
+                "A:",
+                "The hint text is",
+                "Hint:",
+                "You should use",
+                "I suggest",
+                "The appropriate hint would be"
+            ]
+            
+            for phrase in unwanted_phrases:
+                if real_ans.lower().startswith(phrase.lower()):
+                    real_ans = real_ans[len(phrase):].strip()
+                    break
+            
+            # Try to extract text between quotes if present
+            if "'" in real_ans and real_ans.count("'") >= 2:
+                quoted_text = real_ans.split("'")[1]
+                if len(quoted_text.strip()) > 0:
+                    real_ans = quoted_text.strip()
+            elif '"' in real_ans and real_ans.count('"') >= 2:
+                quoted_text = real_ans.split('"')[1]
+                if len(quoted_text.strip()) > 0:
+                    real_ans = quoted_text.strip()
+            
+            # Remove punctuation at the end
+            real_ans = real_ans.rstrip('.,!?:')
+            
+            # If response is too generic, try asking Gemini again with more specific prompt
+            generic_responses = ['email', 'enter email', 'your email',
+                                'password', 'enter password', 'phone',
+                                'enter phone', 'name', 'enter name',
+                                'username', 'enter username', 'text',
+                                'input', 'data', 'field']
+            
+            if (real_ans.lower() in generic_responses or
+                    len(real_ans) < 3 or
+                    any(word in real_ans.lower() for word in
+                        ['context', 'question', 'android', 'edittext'])):
+                
+                print(f"[DEBUG] Got generic response: '{real_ans}', "
+                      f"asking Gemini for specific example...")
+                
+                # Create a more specific prompt for Gemini
+                component_id = dict_info.get('id', '').lower()
+                component_hint = e_component.get('@hint', '').lower()
+                
+                specific_prompt = (f"Generate a realistic example for this field: "
+                                 f"Field ID: '{component_id}', "
+                                 f"Hint: '{component_hint}'. "
+                                 f"Provide ONLY the example data that a real user "
+                                 f"would type, nothing else. "
+                                 f"Examples: john.doe@example.com, +1234567890, "
+                                 f"John Smith, MySecure123")
+                
+                # Try asking Gemini again with more specific prompt
+                try:
+                    specific_output = getOutput(specific_prompt)
+                    if specific_output and len(specific_output.strip()) > 2:
+                        real_ans = specific_output.strip()
+                        print(f"[DEBUG] Gemini's specific response: '{real_ans}'")
+                    else:
+                        real_ans = "sample_data"
+                        print(f"[DEBUG] No specific response, using: {real_ans}")
+                except Exception:
+                    real_ans = "sample_data"
+                    print(f"[DEBUG] Error getting specific response, "
+                          f"using: {real_ans}")
+            else:
+                print(f"[DEBUG] Using Gemini's response: '{real_ans}'")
+                    
+        except Exception as e:
+            print(f"Error parsing Gemini response: {e}")
+            real_ans = "sample_data"
+            
+        print('Sample input data suggested: (' + real_ans + ')')
 
         res = []
         bounds = e_component['@bounds']
@@ -344,9 +539,16 @@ while True:
         res.append(mid[1])
         res.append(bounds[2].replace(']', ''))
         print(res)
-        show_hint(res, real_ans)
-        e_id = e_component['@resource-id']
-        e_id = e_id.split('/')[-1]
-        print(e_id)
-        insert_code(e_id, real_ans, f_path)
-    time.sleep(3)
+        
+        # Show the sample data suggestion
+        success = show_hint_console_only(res, real_ans)
+        if success:
+            print(f"Successfully processed EditText with sample data: '{real_ans}'")
+        else:
+            print(f" Could not display hint directly, but suggestion is: '{real_ans}'")
+        
+        # Optional: Add a small delay between processing each EditText
+        time.sleep(2)  # Give user time to see the hint
+    
+    print("Finished processing all EditText components. Waiting before next scan...")
+    time.sleep(5)  # Wait 5 seconds before scanning again
