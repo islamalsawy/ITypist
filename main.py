@@ -4,34 +4,65 @@ import xmltodict
 import time
 import win32api
 import win32con
-from openai import OpenAI
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+import torch
 
-# Set ADB path BEFORE importing uiautomator2
+# ===============================
+#  ADB PATH SETUP
+# ===============================
 android_sdk_path = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk\platform-tools"
 current_path = os.environ.get('PATH', '')
 if android_sdk_path not in current_path:
     os.environ['PATH'] = android_sdk_path + os.pathsep + current_path
-if android_sdk_path not in current_path:
-    os.environ['PATH'] = android_sdk_path + os.pathsep + current_path
 
-# Set ADB path environment variables for uiautomator2
 os.environ['ANDROID_HOME'] = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk"
 os.environ['ANDROID_SDK_ROOT'] = r"C:\Users\islam.elafify\AppData\Local\Android\Sdk"
 
-# Now import uiautomator2 after PATH is set
+# Import uiautomator2 AFTER adb path is set
 import uiautomator2 as u2
 import pprint
 
-# Configure OpenAI with your API key
-api_key = ("sk-proj-h-a4m2ytlim46bq2Hj7XLsJ0P_shBPjVTAWE3OwqVw4ycDFDCGvPuL"
-           "Y7IZmheSjFOM9O3oGIbLT3BlbkFJZ_DejDQN9aX0boJMYacQQq1gFCo3lx"
-           "n4jnu_eY0CbAF2WeQh_u7ShNNfJJkreFe4tQhw1pCs4A")
-client = OpenAI(api_key=api_key)
+# ===============================
+#  MODEL + LORA LOADING
+# ===============================
+# Paths
+
+MODEL_PATH = r"C:\Users\islam.elafify\Downloads\QTypist-main\source code\qwen2.5b_rico_lora_opt\models--Qwen--Qwen2.5-7B-Instruct\snapshots\a09a35458c702b33eeacc393d103063234e8bc28"
+ADAPTER_PATH = MODEL_PATH  # since adapter + tokenizer + model are in same folder
+OFFLOAD_DIR = r"C:\Users\islam.elafify\Downloads\QTypist-main\offload"
+os.makedirs(OFFLOAD_DIR, exist_ok=True)
+print("🔄 Loading tokenizer...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+
+print("🔄 Loading base model...")
+base_model = AutoModelForCausalLM.from_pretrained(
+    MODEL_PATH,
+    device_map="auto",
+    torch_dtype="auto",
+    low_cpu_mem_usage=True,
+    ignore_mismatched_sizes=True,
+    offload_folder=OFFLOAD_DIR
+    )
+
+print("🔄 Attaching LoRA adapter...")
+lora_model = PeftModel.from_pretrained(base_model, ADAPTER_PATH)
+
+print("🔄 Merging LoRA weights into base model...")
+merged_model = lora_model.merge_and_unload()
+
+print("✅ Model + LoRA merged successfully!")
+
+# Use merged_model everywhere instead of "model"
+model = merged_model
+
+
+# =====================================================
+# Helper functions for UI analysis
+# =====================================================
 
 def getAllComponents(jsondata: dict):
-
     root = jsondata['hierarchy']
-
     queue = [root]
     res = []
 
@@ -53,7 +84,6 @@ def getAllComponents(jsondata: dict):
 
 
 def find_EditText(jsondata: dict):
-
     all_components = getAllComponents(jsondata)
     ans = []
 
@@ -64,7 +94,6 @@ def find_EditText(jsondata: dict):
 
 
 def get_basic_info(e_component: dict):
-
     key_list = ['id', 'text', 'label', 'text-hint', 'app_name']
     key_at_list = ['resource-id', 'text', 'label', 'content-desc', 'package']
     dict_info = {}
@@ -80,8 +109,6 @@ def get_basic_info(e_component: dict):
 
 
 def chooseFromPos(all_components: list, bounds: list):
-
-    
     same_horizon_components = []
     same_vertical_components = []
 
@@ -98,40 +125,38 @@ def chooseFromPos(all_components: list, bounds: list):
 
 
 def turn_null_to_str(prop: str):
-
-    if prop == None:
+    if prop is None:
         return ''
     else:
         return prop
 
 
 def component_basic_info(jsondata: dict):
-
     text_id = "The purpose of this component may be '<EditText id>'. "
     text_label = "The label of this component is '<label>'. "
     text_text = "The text on this component is '<text>'. "
     text_hint = "The hint text of this component is '<hint>'. "
 
-    if jsondata['id'] == "" or jsondata['id'] == None:
+    if jsondata['id'] == "" or jsondata['id'] is None:
         text_id = ""
     else:
         EditText_id = jsondata['id'].split('/')[-1]
         EditText_id = EditText_id.replace('_', ' ')
         text_id = text_id.replace('<EditText id>', EditText_id)
 
-    if jsondata['label'] == "" or jsondata['label'] == None:
+    if jsondata['label'] == "" or jsondata['label'] is None:
         text_label = ""
     else:
         label = jsondata['label']
         text_label = text_label.replace('<label>', label)
 
-    if jsondata['text'] == "" or jsondata['text'] == None:
+    if jsondata['text'] == "" or jsondata['text'] is None:
         text_text = ""
     else:
         text = jsondata['text']
         text_text = text_text.replace('<text>', text)
 
-    if jsondata['text-hint'] == "" or jsondata['text-hint'] == None:
+    if jsondata['text-hint'] == "" or jsondata['text-hint'] is None:
         text_hint = ""
     else:
         hint = jsondata['text-hint']
@@ -141,149 +166,141 @@ def component_basic_info(jsondata: dict):
 
 
 def isEnglish(s: str):
-
     s = s.replace('\u2026', '')
     return s.isascii()
 
 
 def use_context_info_generate_prompt(jsondata: dict):
-
-    text_header = "Question: "
-    text_app_name = "This is a <app name> app. "
-    text_activity_name = "On its page, it has an input component. "
-    text_label = "The label of this component is '<label>'. "
-    text_text = "The text on this component is '<text>'. "
-    text_context_info = "Below is the relevant prompt information of the input component:\n<context information>"
-    text_id = "The purpose of this input component may be '<EditText id>'. "
-    text_ask = "What is the hint text of this input component?\n"
-
-    app_name = jsondata['app_name'].split('.')[-1]
-    text_app_name = text_app_name.replace('<app name>', app_name)
-
-    if jsondata['label'] == "" or jsondata['label'] == None:
-        text_label = ""
+    # Extract key semantic information quickly
+    app_name = jsondata['app_name'].split('.')[-1] if jsondata['app_name'] else "app"
+    field_id = jsondata['id'].split('/')[-1] if jsondata['id'] else ""
+    field_text = jsondata['text'] if jsondata['text'] else ""
+    field_label = jsondata['label'] if jsondata['label'] else ""
+    
+    # Create focused semantic prompt for faster processing
+    field_purpose = ""
+    if field_id:
+        field_purpose = field_id.replace('_', ' ').replace('-', ' ')
+    
+    # Build concise context
+    context_parts = []
+    if app_name and app_name != "app":
+        context_parts.append(f"{app_name} app")
+    if field_text and field_text != "":
+        context_parts.append(f"field shows '{field_text}'")
+    if field_purpose and field_purpose != "":
+        context_parts.append(f"purpose: {field_purpose}")
+    
+    # Simple, direct prompt for fast generation
+    if context_parts:
+        question = f"Generate data for {' '.join(context_parts)}"
     else:
-        label = jsondata['label']
-        text_label = text_label.replace('<label>', label)
-
-    if jsondata['text'] == "" or jsondata['text'] == None:
-        text_text = ""
-    else:
-        text = jsondata['text']
-        text_text = text_text.replace('<text>', text)
-
-    context_info = ""
-    if len(jsondata['same-horizon']) > 0:
-        for e in jsondata['same-horizon']:
-            if not isEnglish(turn_null_to_str(e['label']) + turn_null_to_str(e['text']) + turn_null_to_str(
-                    e['text-hint'])):
-                continue
-            context_info += "There is a component on the same horizontal line as this input component. "
-            context_info += component_basic_info(e)
-
-    if len(jsondata['same-vertical']) > 0:
-        for e in jsondata['same-vertical']:
-            if not isEnglish(turn_null_to_str(e['label']) + turn_null_to_str(e['text']) + turn_null_to_str(
-                    e['text-hint'])):
-                continue
-            context_info += "There is a component on the same vertical line as this input component. "
-            context_info += component_basic_info(e)
-
-    if len(jsondata['same-horizon']) > 0 or len(jsondata['same-vertical']) > 0:
-        text_context_info = text_context_info.replace('<context information>', context_info)
-    else:
-        text_context_info = ""
-
-    if jsondata['id'] == "" or jsondata['id'] == None:
-        text_id = ""
-    else:
-        EditText_id = jsondata['id'].split('/')[-1]
-        EditText_id = EditText_id.replace('_', ' ')
-        text_id = text_id.replace('<EditText id>', EditText_id)
-
-    # Create an intelligent prompt that provides rich context for analysis
-    question = (f"Analyze this Android form field and generate appropriate sample data. "
-                f"App Context: {text_app_name}"
-                f"Field Details: {text_label}{text_text}{text_id}"
-                f"Surrounding Elements: {text_context_info} "
-                f"Instructions: Based on the app name, field labels, surrounding UI elements, "
-                f"and field ID, intelligently determine what type of data this field expects "
-                f"and generate a realistic example that a real user would type. "
-                f"Respond with ONLY the sample data - no explanations or quotes.")
+        question = "Generate sample form data"
     
     return question
 
 
+# =====================================================
+# LoRA Model functions
+# =====================================================
+
 def getOutput(question: str):
+    """PURE LoRA model generation - no predefined fallbacks, model only"""
     try:
-        # Use OpenAI to intelligently analyze context and generate appropriate data
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": ("You are an expert Android UI analyst. Analyze form field "
-                               "context (app name, labels, surrounding elements, field IDs) "
-                               "to intelligently determine what data type is expected. "
-                               "Generate realistic sample data that real users would type. "
-                               "Examples: emails (john.doe@gmail.com), names (John Smith), "
-                               "phones (+1234567890), passwords (MyPass123), addresses, etc. "
-                               "Respond with ONLY the sample data, no explanations.")
-                },
-                {
-                    "role": "user",
-                    "content": question
-                }
-            ],
-            max_tokens=50,
-            temperature=0.2,  # Lower for more consistent context analysis
-            stop=["\n", ".", "\"", "'"]
-        )
+        print("🚀 Pure model generation...")
         
-        # Process and validate response
-        if response.choices and response.choices[0].message.content:
-            result = response.choices[0].message.content.strip()
-            # Clean up unwanted characters and artifacts
-            result = result.replace('"', '').replace("'", '').strip()
-            result = result.replace('Example:', '').replace('Sample:', '').strip()
-            result = result.replace('Answer:', '').replace('Data:', '').strip()
-            
-            # If result seems generic or invalid, try simpler approach
-            if (len(result) < 2 or 
-                result.lower() in ['text', 'data', 'input', 'sample', 'field'] or
-                any(word in result.lower() for word in ['generate', 'analyze', 'context'])):
-                
-                # Fallback with more direct prompt
-                simple_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"What data would a user type here? {question[:150]}... Just the data:"
-                        }
-                    ],
-                    max_tokens=20,
-                    temperature=0.1
-                )
-                
-                if simple_response.choices and simple_response.choices[0].message.content:
-                    fallback_result = simple_response.choices[0].message.content.strip()
-                    fallback_result = fallback_result.replace('"', '').replace("'", '').strip()
-                    if len(fallback_result) > 1 and fallback_result.lower() not in ['text', 'data']:
-                        return fallback_result
-            
-            return result if result else "sample_data"
+        # Create minimal focused prompt for faster generation
+        if "calendar" in question.lower() and "title" in question.lower():
+            prompt = "Calendar event title:"
+        elif "meeting" in question.lower() and "title" in question.lower():
+            prompt = "Meeting title:"
+        elif "email" in question.lower():
+            prompt = "Email address:"
+        elif "phone" in question.lower() or "mobile" in question.lower():
+            prompt = "Phone number:"
+        elif "name" in question.lower():
+            prompt = "Full name:"
+        elif "password" in question.lower():
+            prompt = "Password:"
+        elif "address" in question.lower():
+            prompt = "Address:"
+        elif "location" in question.lower():
+            prompt = "Location:"
+        elif "description" in question.lower() or "note" in question.lower():
+            prompt = "Description:"
         else:
-            print("Empty response from OpenAI API")
-            return "sample_data"
+            prompt = "Sample text:"
+        
+        print(f"📝 Prompt: '{prompt}'")
+        
+        # Use minimal input for fastest generation
+        inputs = tokenizer(prompt, return_tensors="pt", max_length=64, truncation=True)
+        
+        # Move to device if model has one
+        if hasattr(model, 'device'):
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        
+        print("⚡ Model generating...")
+        
+        # Optimized parameters for speed and quality
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=12,       # Enough for meaningful output
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                top_k=20,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.15,
+                num_beams=1
+            )
+        
+        # Decode only the new generated tokens
+        generated_text = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        
+        print(f"🔍 Raw output: '{generated_text}'")
+        
+        # Clean the result efficiently
+        result = generated_text.strip()
+        
+        # Remove common unwanted patterns quickly
+        unwanted_patterns = ['Answer:', 'Response:', 'Sample:', 'Example:', 'Data:', 'Input:', 'Value:', 'Text:', 'The ', 'A ', 'An ']
+        for pattern in unwanted_patterns:
+            if result.startswith(pattern):
+                result = result[len(pattern):].strip()
+                break
+        
+        # Clean quotes and extra characters
+        result = result.replace('"', '').replace("'", '').replace('`', '').replace(':', '')
+        
+        # Take first meaningful part
+        if '\n' in result:
+            result = result.split('\n')[0].strip()
+        
+        # Remove trailing punctuation
+        result = result.strip('.,!?;: \t\n')
+        
+        # Validate result - ONLY check if it's meaningful, no semantic filtering
+        if (result and 
+            len(result) >= 2 and 
+            any(c.isalnum() for c in result) and
+            not result.lower() in ['none', 'null', 'empty', 'n/a', 'na']):
             
+            print(f"✅ Model generated: '{result}'")
+            return result
+        
+        print(f"❌ Model output not meaningful: '{result}'")
+        return None  # Return None if model truly fails, no fallbacks
+        
     except Exception as e:
-        print(f"Error with OpenAI API: {e}")
-        return "sample_data"
+        print(f"❌ Error: {e}")
+        return None  # Return None on error, no fallbacks
 
 
-def show_hint_console_only(res: list, hint_text: str):
-    """Enhanced version - shows sample data in console AND displays on emulator"""
+def show_hint_console_only(res: list, hint_text: str, device_conn):
+    """Enhanced version - shows sample data in console AND displays on phone"""
     x1 = int(res[0])
     y1 = int(res[1])
     x2 = int(res[2])
@@ -297,51 +314,99 @@ def show_hint_console_only(res: list, hint_text: str):
     print(f"Field Dimensions: {x2-x1}px x {y2-y1}px")
     print("=" * 60)
     
-    # Also try to show sample data on emulator screen
+    # Also try to show sample data on phone screen
     try:
-        # Connect to device
-        d = u2.connect()
+        # Use the passed device connection
+        print("[PHONE] Connecting to device...")
+        d = device_conn
         
         # Calculate center of EditText
         center_x = (x1 + x2) // 2
         center_y = (y1 + y2) // 2
         
-        print("[EMULATOR] Displaying sample data on screen...")
-        print(f"[EMULATOR] Clicking at position ({center_x}, {center_y})")
+        print(f"[PHONE] Clicking at position ({center_x}, {center_y})")
         
-        # Click on the EditText to focus it
-        d.click(center_x, center_y)
+        # Multiple attempts for Samsung phones
+        for attempt in range(3):
+            try:
+                # Click on the EditText to focus it
+                d.click(center_x, center_y)
+                time.sleep(0.8)  # Longer wait for Samsung UI
+                
+                print(f"[PHONE] Attempt {attempt + 1}: Entering text '{hint_text}'")
+                
+                # Method 1: Try direct text input using shell
+                try:
+                    d.shell(f'input text "{hint_text}"')
+                    print(f"[PHONE] ✅ Method 1 success: shell input")
+                    break
+                except:
+                    pass
+                
+                # Method 2: Try using set_text on focused element
+                try:
+                    edit_field = d(focused=True)
+                    if edit_field.exists():
+                        edit_field.clear_text()  # Clear first
+                        time.sleep(0.3)
+                        edit_field.set_text(hint_text)
+                        print(f"[PHONE] ✅ Method 2 success: set_text")
+                        break
+                    else:
+                        print(f"[PHONE] No focused element found")
+                except Exception as e:
+                    print(f"[PHONE] Method 2 failed: {e}")
+                
+                # Method 3: Try send_keys
+                try:
+                    # Clear field first with Ctrl+A and delete
+                    d.send_keys("ctrl+a")
+                    time.sleep(0.2)
+                    d.send_keys("delete")
+                    time.sleep(0.2)
+                    d.send_keys(hint_text)
+                    print(f"[PHONE] ✅ Method 3 success: send_keys")
+                    break
+                except Exception as e:
+                    print(f"[PHONE] Method 3 failed: {e}")
+                
+                # Method 4: Character-by-character input for complex fields
+                if attempt == 2:  # Last attempt
+                    try:
+                        d.click(center_x, center_y)
+                        time.sleep(0.5)
+                        # Clear field
+                        for _ in range(50):  # Clear any existing text
+                            d.send_keys("backspace")
+                        time.sleep(0.3)
+                        # Type character by character
+                        for char in hint_text:
+                            d.send_keys(char)
+                            time.sleep(0.1)
+                        print(f"[PHONE] ✅ Method 4 success: char-by-char")
+                        break
+                    except Exception as e:
+                        print(f"[PHONE] Method 4 failed: {e}")
+                
+            except Exception as e:
+                print(f"[PHONE] Attempt {attempt + 1} failed: {e}")
+                if attempt < 2:
+                    time.sleep(1)
+                    continue
+        
         time.sleep(0.5)
-        
-        # Simply clear and type new text in one operation using set_text
-        try:
-            # Get the focused EditText element and set the text directly
-            # This method replaces ALL existing content
-            edit_field = d(focused=True)
-            if edit_field.exists():
-                edit_field.set_text(hint_text)  # Replace everything with sample data
-                print(f"[EMULATOR] Set text directly to: '{hint_text}'")
-            else:
-                # Fallback: use the specific resource ID if available
-                # Note: component_id would need to be passed as parameter
-                d.send_keys(hint_text)
-                print(f"[EMULATOR] Sent keys: '{hint_text}'")
-        except Exception as e:
-            print(f"[DEBUG] Error setting text: {e}")
-            # Last resort: just send the keys
-            d.send_keys(hint_text)
-        
-        time.sleep(0.3)
-        
-        print(f"[EMULATOR] Displayed sample data '{hint_text}' successfully!")
+        print(f"[PHONE] ✅ Finished entering: '{hint_text}'")
         
     except Exception as e:
-        print(f"[EMULATOR] Could not display on emulator: {e}")
-        print("[EMULATOR] But sample data suggestion is available above")
+        print(f"[PHONE] ❌ Could not display on phone: {e}")
+        print("[PHONE] But sample data suggestion is available above")
     
     print("=" * 60 + "\n")
     return True
 
+
+# Add torch import at the top (needed for inference)
+import torch
 
 while True:
     print('Connect to device...')
@@ -350,7 +415,7 @@ while True:
         import subprocess
         result = subprocess.run([
             r"C:\Users\islam.elafify\AppData\Local\Android\Sdk\platform-tools\adb.exe", 
-            "devices"
+            "devices", "-l"
         ], capture_output=True, text=True)
         
         devices_output = result.stdout.strip()
@@ -359,17 +424,46 @@ while True:
         if "device" not in devices_output or "List of devices attached" in devices_output and len(devices_output.split('\n')) <= 1:
             print("No Android devices/emulators detected!")
             print("Please make sure:")
-            print("1. Android emulator is running")
-            print("2. USB debugging is enabled (for physical devices)")
-            print("3. ADB server is running")
+            print("1. USB debugging is enabled on your phone")
+            print("2. Phone is connected via USB cable")
+            print("3. You've authorized USB debugging on the phone")
+            print("4. Or Android emulator is running")
+            print("5. ADB server is running")
             print("\nWaiting 10 seconds before retrying...")
             time.sleep(10)
             continue
         
-        d = u2.connect()
-        print('✅ Device connected successfully!')
-        print(d.info)
-        break  # Exit the retry loop once connected
+        # Parse devices and prefer USB devices over emulators
+        lines = devices_output.split('\n')[1:]  # Skip header
+        usb_devices = []
+        emulator_devices = []
+        
+        for line in lines:
+            if line.strip() and 'device' in line:
+                device_id = line.split()[0]
+                if device_id.startswith('emulator-'):
+                    emulator_devices.append(device_id)
+                else:
+                    usb_devices.append(device_id)
+        
+        # Prefer USB device over emulator
+        target_device = None
+        if usb_devices:
+            target_device = usb_devices[0]
+            print(f"📱 Found USB device: {target_device}")
+        elif emulator_devices:
+            target_device = emulator_devices[0]
+            print(f"🔧 Using emulator: {target_device}")
+        
+        if target_device:
+            d = u2.connect(target_device)
+            print(f'✅ Connected to device: {target_device}')
+            print(d.info)
+            break  # Exit the retry loop once connected
+        else:
+            print("No suitable device found!")
+            time.sleep(10)
+            continue
         
     except Exception as e:
         print(f"Failed to connect to device: {e}")
@@ -442,92 +536,15 @@ while True:
         final_text = use_context_info_generate_prompt(dict_info)
         print(final_text)
         output = getOutput(final_text)
-        print(f"API Response: {output}")
+        print(f"LoRA Model Response: {output}")
         
-        # Use Gemini's output and clean it to ensure realistic sample data
-        real_ans = output.strip() if output else "sample_text"
-        
-        # Parse and clean the Gemini response to get realistic sample data
-        try:
-            # Remove common unwanted prefixes/suffixes
-            unwanted_phrases = [
-                "Given the context:",
-                "Based on the context:",
-                "Answer:",
-                "A:",
-                "The hint text is",
-                "Hint:",
-                "You should use",
-                "I suggest",
-                "The appropriate hint would be"
-            ]
-            
-            for phrase in unwanted_phrases:
-                if real_ans.lower().startswith(phrase.lower()):
-                    real_ans = real_ans[len(phrase):].strip()
-                    break
-            
-            # Try to extract text between quotes if present
-            if "'" in real_ans and real_ans.count("'") >= 2:
-                quoted_text = real_ans.split("'")[1]
-                if len(quoted_text.strip()) > 0:
-                    real_ans = quoted_text.strip()
-            elif '"' in real_ans and real_ans.count('"') >= 2:
-                quoted_text = real_ans.split('"')[1]
-                if len(quoted_text.strip()) > 0:
-                    real_ans = quoted_text.strip()
-            
-            # Remove punctuation at the end
-            real_ans = real_ans.rstrip('.,!?:')
-            
-            # If response is too generic, try asking Gemini again with more specific prompt
-            generic_responses = ['email', 'enter email', 'your email',
-                                'password', 'enter password', 'phone',
-                                'enter phone', 'name', 'enter name',
-                                'username', 'enter username', 'text',
-                                'input', 'data', 'field']
-            
-            if (real_ans.lower() in generic_responses or
-                    len(real_ans) < 3 or
-                    any(word in real_ans.lower() for word in
-                        ['context', 'question', 'android', 'edittext'])):
-                
-                print(f"[DEBUG] Got generic response: '{real_ans}', "
-                      f"asking Gemini for specific example...")
-                
-                # Create a more specific prompt for Gemini
-                component_id = dict_info.get('id', '').lower()
-                component_hint = e_component.get('@hint', '').lower()
-                
-                specific_prompt = (f"Generate a realistic example for this field: "
-                                 f"Field ID: '{component_id}', "
-                                 f"Hint: '{component_hint}'. "
-                                 f"Provide ONLY the example data that a real user "
-                                 f"would type, nothing else. "
-                                 f"Examples: john.doe@example.com, +1234567890, "
-                                 f"John Smith, MySecure123")
-                
-                # Try asking Gemini again with more specific prompt
-                try:
-                    specific_output = getOutput(specific_prompt)
-                    if specific_output and len(specific_output.strip()) > 2:
-                        real_ans = specific_output.strip()
-                        print(f"[DEBUG] Gemini's specific response: '{real_ans}'")
-                    else:
-                        real_ans = "sample_data"
-                        print(f"[DEBUG] No specific response, using: {real_ans}")
-                except Exception:
-                    real_ans = "sample_data"
-                    print(f"[DEBUG] Error getting specific response, "
-                          f"using: {real_ans}")
-            else:
-                print(f"[DEBUG] Using Gemini's response: '{real_ans}'")
-                    
-        except Exception as e:
-            print(f"Error parsing Gemini response: {e}")
-            real_ans = "sample_data"
-            
-        print('Sample input data suggested: (' + real_ans + ')')
+        # ONLY use LoRA model output - skip if model failed
+        if output and output.strip():
+            real_ans = output.strip()
+            print(f'✅ Using LoRA-generated data: ({real_ans})')
+        else:
+            print("❌ LoRA model failed to generate data - skipping this field")
+            continue  # Skip this EditText and move to next one
 
         res = []
         bounds = e_component['@bounds']
@@ -541,7 +558,7 @@ while True:
         print(res)
         
         # Show the sample data suggestion
-        success = show_hint_console_only(res, real_ans)
+        success = show_hint_console_only(res, real_ans, d)
         if success:
             print(f"Successfully processed EditText with sample data: '{real_ans}'")
         else:
