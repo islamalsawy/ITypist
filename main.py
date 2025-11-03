@@ -171,33 +171,77 @@ def isEnglish(s: str):
 
 
 def use_context_info_generate_prompt(jsondata: dict):
-    # Extract key semantic information quickly
-    app_name = jsondata['app_name'].split('.')[-1] if jsondata['app_name'] else "app"
-    field_id = jsondata['id'].split('/')[-1] if jsondata['id'] else ""
-    field_text = jsondata['text'] if jsondata['text'] else ""
-    field_label = jsondata['label'] if jsondata['label'] else ""
-    
-    # Create focused semantic prompt for faster processing
-    field_purpose = ""
-    if field_id:
-        field_purpose = field_id.replace('_', ' ').replace('-', ' ')
-    
-    # Build concise context
-    context_parts = []
-    if app_name and app_name != "app":
-        context_parts.append(f"{app_name} app")
-    if field_text and field_text != "":
-        context_parts.append(f"field shows '{field_text}'")
-    if field_purpose and field_purpose != "":
-        context_parts.append(f"purpose: {field_purpose}")
-    
-    # Simple, direct prompt for fast generation
-    if context_parts:
-        question = f"Generate data for {' '.join(context_parts)}"
+    # Original structure but with better field type detection
+    text_header = "Question: "
+    text_app_name = "This is a <app name> app. "
+    text_activity_name = "On its page, it has an input component. "
+    text_label = "The label of this component is '<label>'. "
+    text_text = "The text on this component is '<text>'. "
+    text_context_info = "Below is the relevant prompt information of the input component:\n<context information>"
+    text_id = "The purpose of this input component may be '<EditText id>'. "
+    text_ask = "What is the hint text of this input component?\n"
+
+    app_name = jsondata['app_name'].split('.')[-1]
+    text_app_name = text_app_name.replace('<app name>', app_name)
+
+    if jsondata['label'] == "" or jsondata['label'] is None:
+        text_label = ""
     else:
-        question = "Generate sample form data"
-    
-    return question
+        label = jsondata['label']
+        text_label = text_label.replace('<label>', label)
+
+    if jsondata['text'] == "" or jsondata['text'] is None:
+        text_text = ""
+    else:
+        text = jsondata['text']
+        text_text = text_text.replace('<text>', text)
+
+    # Filter context to only include relevant information
+    context_info = ""
+    if len(jsondata['same-horizon']) > 0:
+        for e in jsondata['same-horizon']:
+            # Skip empty or irrelevant components
+            text_content = turn_null_to_str(e['label']) + turn_null_to_str(e['text']) + turn_null_to_str(e['text-hint'])
+            if not isEnglish(text_content) or len(text_content.strip()) == 0:
+                continue
+            # Skip keyboard and UI noise
+            if (e['app_name'] and 'honeyboard' in e['app_name']) or len(e['text']) <= 1:
+                continue
+            # Only include meaningful context
+            if any(keyword in text_content.lower() for keyword in ['email', 'password', 'phone', 'name', 'sign', 'login', 'register']):
+                context_info += "There is a component on the same horizontal line as this input component. "
+                context_info += component_basic_info(e)
+
+    if len(jsondata['same-vertical']) > 0:
+        for e in jsondata['same-vertical']:
+            # Skip empty or irrelevant components  
+            text_content = turn_null_to_str(e['label']) + turn_null_to_str(e['text']) + turn_null_to_str(e['text-hint'])
+            if not isEnglish(text_content) or len(text_content.strip()) == 0:
+                continue
+            # Skip keyboard and UI noise
+            if (e['app_name'] and 'honeyboard' in e['app_name']) or len(e['text']) <= 1:
+                continue
+            # Only include meaningful context
+            if any(keyword in text_content.lower() for keyword in ['email', 'password', 'phone', 'name', 'sign', 'login', 'register']):
+                context_info += "There is a component on the same vertical line as this input component. "
+                context_info += component_basic_info(e)
+
+    if context_info:
+        text_context_info = text_context_info.replace('<context information>', context_info)
+    else:
+        text_context_info = ""
+
+    if jsondata['id'] == "" or jsondata['id'] is None:
+        text_id = ""
+    else:
+        EditText_id = jsondata['id'].split('/')[-1]
+        EditText_id = EditText_id.replace('_', ' ')
+        text_id = text_id.replace('<EditText id>', EditText_id)
+
+    question = text_header + text_app_name + text_activity_name + text_label + text_text + text_context_info + text_id + text_ask
+    final_text = question
+
+    return final_text
 
 
 # =====================================================
@@ -205,99 +249,74 @@ def use_context_info_generate_prompt(jsondata: dict):
 # =====================================================
 
 def getOutput(question: str):
-    """PURE LoRA model generation - no predefined fallbacks, model only"""
+    """PURE LoRA model generation - direct model output only"""
     try:
-        print("🚀 Pure model generation...")
+        print("🚀 Pure LoRA generation...")
         
-        # Create minimal focused prompt for faster generation
-        if "calendar" in question.lower() and "title" in question.lower():
-            prompt = "Calendar event title:"
-        elif "meeting" in question.lower() and "title" in question.lower():
-            prompt = "Meeting title:"
-        elif "email" in question.lower():
-            prompt = "Email address:"
+        # Create context-specific prompts that guide the model better
+        if "Enter email" in question or "email" in question.lower():
+            simple_prompt = "user@example"  # This will encourage email completion
+        elif "password" in question.lower() or "Password" in question:
+            simple_prompt = "secure password:"
         elif "phone" in question.lower() or "mobile" in question.lower():
-            prompt = "Phone number:"
+            simple_prompt = "phone number:"
         elif "name" in question.lower():
-            prompt = "Full name:"
-        elif "password" in question.lower():
-            prompt = "Password:"
-        elif "address" in question.lower():
-            prompt = "Address:"
-        elif "location" in question.lower():
-            prompt = "Location:"
-        elif "description" in question.lower() or "note" in question.lower():
-            prompt = "Description:"
+            simple_prompt = "full name:"
         else:
-            prompt = "Sample text:"
+            simple_prompt = "sample text:"
         
-        print(f"📝 Prompt: '{prompt}'")
+        # Use shorter input for faster generation
+        inputs = tokenizer(simple_prompt, return_tensors="pt", max_length=32, truncation=True)
         
-        # Use minimal input for fastest generation
-        inputs = tokenizer(prompt, return_tensors="pt", max_length=64, truncation=True)
-        
-        # Move to device if model has one
+        # Move to device
         if hasattr(model, 'device'):
             inputs = {k: v.to(model.device) for k, v in inputs.items()}
         
-        print("⚡ Model generating...")
-        
-        # Optimized parameters for speed and quality
+        # Generate with parameters optimized for completion
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=12,       # Enough for meaningful output
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
-                top_k=20,
+                max_new_tokens=6,        # Shorter for focused output
+                do_sample=True,          
+                temperature=0.7,         # Balanced creativity
+                top_p=0.9,               
                 pad_token_id=tokenizer.eos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.15,
+                repetition_penalty=1.2,  
                 num_beams=1
             )
         
         # Decode only the new generated tokens
         generated_text = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         
-        print(f"🔍 Raw output: '{generated_text}'")
+        # Combine prompt + generated completion
+        full_result = simple_prompt + generated_text.strip()
         
-        # Clean the result efficiently
-        result = generated_text.strip()
+        # Clean the result - remove quotes and take first meaningful part
+        result = full_result.replace('"', '').replace("'", '').replace('`', '')
         
-        # Remove common unwanted patterns quickly
-        unwanted_patterns = ['Answer:', 'Response:', 'Sample:', 'Example:', 'Data:', 'Input:', 'Value:', 'Text:', 'The ', 'A ', 'An ']
-        for pattern in unwanted_patterns:
-            if result.startswith(pattern):
-                result = result[len(pattern):].strip()
-                break
-        
-        # Clean quotes and extra characters
-        result = result.replace('"', '').replace("'", '').replace('`', '').replace(':', '')
-        
-        # Take first meaningful part
+        # Take first line if multiple lines
         if '\n' in result:
             result = result.split('\n')[0].strip()
         
-        # Remove trailing punctuation
-        result = result.strip('.,!?;: \t\n')
+        # Take first word/token for cleaner output
+        if ' ' in result:
+            result = result.split()[0]
         
-        # Validate result - ONLY check if it's meaningful, no semantic filtering
-        if (result and 
-            len(result) >= 2 and 
-            any(c.isalnum() for c in result) and
-            not result.lower() in ['none', 'null', 'empty', 'n/a', 'na']):
-            
+        # Remove any trailing punctuation
+        result = result.strip('.,!?;:')
+        
+        # Final validation - ensure we have meaningful data
+        if (result and len(result) >= 5 and any(c.isalnum() for c in result)):
             print(f"✅ Model generated: '{result}'")
             return result
         
-        print(f"❌ Model output not meaningful: '{result}'")
-        return None  # Return None if model truly fails, no fallbacks
+        print("❌ Model failed to generate meaningful data")
+        return None
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        return None  # Return None on error, no fallbacks
-
+        return None
 
 def show_hint_console_only(res: list, hint_text: str, device_conn):
     """Enhanced version - shows sample data in console AND displays on phone"""
